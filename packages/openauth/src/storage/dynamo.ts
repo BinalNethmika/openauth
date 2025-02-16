@@ -1,16 +1,74 @@
+/**
+ * Configure OpenAuth to use [DynamoDB](https://aws.amazon.com/dynamodb/) as a storage adapter.
+ *
+ * ```ts
+ * import { DynamoStorage } from "@openauthjs/openauth/storage/dynamo"
+ *
+ * const storage = DynamoStorage({
+ *   table: "my-table",
+ *   pk: "pk",
+ *   sk: "sk"
+ * })
+ *
+ * export default issuer({
+ *   storage,
+ *   // ...
+ * })
+ * ```
+ *
+ * @packageDocumentation
+ */
+
 import { client } from "./aws.js"
 import { joinKey, StorageAdapter } from "./storage.js"
 
+/**
+ * Configure the DynamoDB table that's created.
+ *
+ * @example
+ * ```ts
+ * {
+ *   table: "my-table",
+ *   pk: "pk",
+ *   sk: "sk"
+ * }
+ * ```
+ */
 export interface DynamoStorageOptions {
+  /**
+   * The name of the DynamoDB table.
+   */
   table: string
+  /**
+   * The primary key column name.
+   * @default "pk"
+   */
   pk?: string
+  /**
+   * The sort key column name.
+   * @default "sk"
+   */
   sk?: string
+  /**
+   * Endpoint URL for the DynamoDB service. Useful for local testing.
+   * @default "https://dynamodb.{region}.amazonaws.com"
+   */
+  endpoint?: string
+  /**
+   * The name of the time to live attribute.
+   * @default "expiry"
+   */
+  ttl?: string
 }
 
-export function DynamoStorage(options: DynamoStorageOptions) {
-  const c = client()
+/**
+ * Creates a DynamoDB store.
+ * @param options - The config for the adapter.
+ */
+export function DynamoStorage(options: DynamoStorageOptions): StorageAdapter {
   const pk = options.pk || "pk"
   const sk = options.sk || "sk"
+  const ttl = options.ttl || "expiry"
   const tableName = options.table
 
   function parseKey(key: string[]) {
@@ -27,24 +85,40 @@ export function DynamoStorage(options: DynamoStorageOptions) {
   }
 
   async function dynamo(action: string, payload: any) {
-    const client = await c
-    const response = await client.fetch(
-      `https://dynamodb.${client.region}.amazonaws.com`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-amz-json-1.0",
-          "X-Amz-Target": `DynamoDB_20120810.${action}`,
-        },
-        body: JSON.stringify(payload),
-      },
-    )
+    const c = await client()
+    const endpoint =
+      options.endpoint || `https://dynamodb.${c.region}.amazonaws.com`
+    let retries = 0
+    while (true) {
+      const response = await c
+        .fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-amz-json-1.0",
+            "X-Amz-Target": `DynamoDB_20120810.${action}`,
+          },
+          body: JSON.stringify(payload),
+        })
+        .catch((e) => {
+          retries++
+          if (retries > 3) {
+            throw e
+          }
+          console.error(e)
+          if (e instanceof Error) {
+            console.error(e.cause)
+          }
+        })
+      if (!response) {
+        console.log("retrying dynamo call")
+        continue
+      }
 
-    if (!response.ok) {
-      throw new Error(`DynamoDB request failed: ${response.statusText}`)
+      if (!response.ok) {
+        throw new Error(`DynamoDB request failed: ${response.statusText}`)
+      }
+      return response.json() as Promise<any>
     }
-
-    return response.json() as Promise<any>
   }
 
   return {
@@ -59,22 +133,22 @@ export function DynamoStorage(options: DynamoStorageOptions) {
       }
       const result = await dynamo("GetItem", params)
       if (!result.Item) return
-      if (result.Item.expiry && result.Item.expiry.N < Date.now() / 1000) {
+      if (result.Item[ttl] && result.Item[ttl].N < Date.now() / 1000) {
         return
       }
       return JSON.parse(result.Item.value.S)
     },
 
-    async set(key: string[], value: any, ttl) {
+    async set(key: string[], value: any, expiry?: Date) {
       const parsed = parseKey(key)
       const params = {
         TableName: tableName,
         Item: {
           [pk]: { S: parsed.pk },
           [sk]: { S: parsed.sk },
-          ...(ttl
+          ...(expiry
             ? {
-                expiry: { N: (Math.floor(Date.now() / 1000) + ttl).toString() },
+                [ttl]: { N: Math.floor(expiry.getTime() / 1000).toString() },
               }
             : {}),
           value: { S: JSON.stringify(value) },
@@ -122,7 +196,7 @@ export function DynamoStorage(options: DynamoStorageOptions) {
         const result = await dynamo("Query", params)
 
         for (const item of result.Items || []) {
-          if (item.expiry && item.expiry.N < now) {
+          if (item[ttl] && item[ttl].N < now) {
             continue
           }
           yield [[item[pk].S, item[sk].S], JSON.parse(item.value.S)]
@@ -132,5 +206,5 @@ export function DynamoStorage(options: DynamoStorageOptions) {
         lastEvaluatedKey = result.LastEvaluatedKey
       }
     },
-  } satisfies StorageAdapter
+  }
 }

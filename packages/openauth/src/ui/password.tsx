@@ -1,3 +1,27 @@
+/**
+ * Configure the UI that's used by the Password provider.
+ *
+ * ```ts {1,7-12}
+ * import { PasswordUI } from "@openauthjs/openauth/ui/password"
+ * import { PasswordProvider } from "@openauthjs/openauth/provider/password"
+ *
+ * export default issuer({
+ *   providers: {
+ *     password: PasswordAdapter(
+ *       PasswordUI({
+ *         copy: {
+ *           error_email_taken: "This email is already taken."
+ *         },
+ *         sendCode: (email, code) => console.log(email, code)
+ *       })
+ *     )
+ *   },
+ *   // ...
+ * })
+ * ```
+ *
+ * @packageDocumentation
+ */
 /** @jsxImportSource hono/jsx */
 
 import {
@@ -5,33 +29,105 @@ import {
   PasswordConfig,
   PasswordLoginError,
   PasswordRegisterError,
-} from "../adapter/password.js"
+} from "../provider/password.js"
 import { Layout } from "./base.js"
 import "./form.js"
 import { FormAlert } from "./form.js"
 
 const DEFAULT_COPY = {
+  /**
+   * Error message when email is already taken.
+   */
   error_email_taken: "There is already an account with this email.",
+  /**
+   * Error message when the confirmation code is incorrect.
+   */
   error_invalid_code: "Code is incorrect.",
+  /**
+   * Error message when the email is invalid.
+   */
   error_invalid_email: "Email is not valid.",
+  /**
+   * Error message when the password is incorrect.
+   */
   error_invalid_password: "Password is incorrect.",
+  /**
+   * Error message when the passwords do not match.
+   */
   error_password_mismatch: "Passwords do not match.",
+  /**
+   * Error message when the user enters a password that fails validation.
+   */
+  error_validation_error: "Password does not meet requirements.",
+  /**
+   * Title of the register page.
+   */
   register_title: "Welcome to the app",
+  /**
+   * Description of the register page.
+   */
   register_description: "Sign in with your email",
+  /**
+   * Title of the login page.
+   */
   login_title: "Welcome to the app",
+  /**
+   * Description of the login page.
+   */
   login_description: "Sign in with your email",
+  /**
+   * Copy for the register button.
+   */
   register: "Register",
+  /**
+   * Copy for the register link.
+   */
   register_prompt: "Don't have an account?",
+  /**
+   * Copy for the login link.
+   */
   login_prompt: "Already have an account?",
+  /**
+   * Copy for the login button.
+   */
   login: "Login",
+  /**
+   * Copy for the forgot password link.
+   */
   change_prompt: "Forgot password?",
+  /**
+   * Copy for the resend code button.
+   */
   code_resend: "Resend code",
+  /**
+   * Copy for the "Back to" link.
+   */
   code_return: "Back to",
+  /**
+   * Copy for the logo.
+   * @internal
+   */
   logo: "A",
+  /**
+   * Copy for the email input.
+   */
   input_email: "Email",
+  /**
+   * Copy for the password input.
+   */
   input_password: "Password",
+  /**
+   * Copy for the code input.
+   */
   input_code: "Code",
+  /**
+   * Copy for the repeat password input.
+   */
   input_repeat: "Repeat password",
+  /**
+   * Copy for the continue button.
+   */
+  button_continue: "Continue",
 } satisfies {
   [key in `error_${
     | PasswordLoginError["type"]
@@ -39,19 +135,30 @@ const DEFAULT_COPY = {
     | PasswordChangeError["type"]}`]: string
 } & Record<string, string>
 
-export type PasswordUICopy = typeof DEFAULT_COPY
+type PasswordUICopy = typeof DEFAULT_COPY
 
-export interface PasswordUIOptions {
-  sendCode: PasswordConfig["sendCode"]
+/**
+ * Configure the password UI.
+ */
+export interface PasswordUIOptions
+  extends Pick<PasswordConfig, "sendCode" | "validatePassword"> {
+  /**
+   * Custom copy for the UI.
+   */
   copy?: Partial<PasswordUICopy>
 }
 
-export function PasswordUI(input: PasswordUIOptions) {
+/**
+ * Creates a UI for the Password provider flow.
+ * @param input - Configure the UI.
+ */
+export function PasswordUI(input: PasswordUIOptions): PasswordConfig {
   const copy = {
     ...DEFAULT_COPY,
     ...input.copy,
   }
   return {
+    validatePassword: input.validatePassword,
     sendCode: input.sendCode,
     login: async (_req, form, error): Promise<Response> => {
       const jsx = (
@@ -73,10 +180,10 @@ export function PasswordUI(input: PasswordUIOptions) {
               required
               type="password"
               name="password"
-              placeholder="Password"
+              placeholder={copy.input_password}
               autoComplete="current-password"
             />
-            <button data-component="button">Continue</button>
+            <button data-component="button">{copy.button_continue}</button>
             <div data-component="form-footer">
               <span>
                 {copy.register_prompt}{" "}
@@ -102,13 +209,23 @@ export function PasswordUI(input: PasswordUIOptions) {
       const emailError = ["invalid_email", "email_taken"].includes(
         error?.type || "",
       )
-      const passwordError = ["invalid_password", "password_mismatch"].includes(
-        error?.type || "",
-      )
+      const passwordError = [
+        "invalid_password",
+        "password_mismatch",
+        "validation_error",
+      ].includes(error?.type || "")
       const jsx = (
         <Layout>
           <form data-component="form" method="post">
-            <FormAlert message={error?.type && copy?.[`error_${error.type}`]} />
+            <FormAlert
+              message={
+                error?.type
+                  ? error.type === "validation_error"
+                    ? (error.message ?? copy?.[`error_${error.type}`])
+                    : copy?.[`error_${error.type}`]
+                  : undefined
+              }
+            />
             {state.type === "start" && (
               <>
                 <input type="hidden" name="action" value="register" />
@@ -142,7 +259,7 @@ export function PasswordUI(input: PasswordUIOptions) {
                   placeholder={copy.input_repeat}
                   autoComplete="new-password"
                 />
-                <button data-component="button">Continue</button>
+                <button data-component="button">{copy.button_continue}</button>
                 <div data-component="form-footer">
                   <span>
                     {copy.login_prompt}{" "}
@@ -167,7 +284,7 @@ export function PasswordUI(input: PasswordUIOptions) {
                   placeholder={copy.input_code}
                   autoComplete="one-time-code"
                 />
-                <button data-component="button">Continue</button>
+                <button data-component="button">{copy.button_continue}</button>
               </>
             )}
           </form>
@@ -180,13 +297,23 @@ export function PasswordUI(input: PasswordUIOptions) {
       })
     },
     change: async (_req, state, form, error): Promise<Response> => {
-      const passwordError = ["invalid_password", "password_mismatch"].includes(
-        error?.type || "",
-      )
+      const passwordError = [
+        "invalid_password",
+        "password_mismatch",
+        "validation_error",
+      ].includes(error?.type || "")
       const jsx = (
         <Layout>
           <form data-component="form" method="post" replace>
-            <FormAlert message={error?.type && copy?.[`error_${error.type}`]} />
+            <FormAlert
+              message={
+                error?.type
+                  ? error.type === "validation_error"
+                    ? (error.message ?? copy?.[`error_${error.type}`])
+                    : copy?.[`error_${error.type}`]
+                  : undefined
+              }
+            />
             {state.type === "start" && (
               <>
                 <input type="hidden" name="action" value="code" />
@@ -244,7 +371,7 @@ export function PasswordUI(input: PasswordUIOptions) {
                 />
               </>
             )}
-            <button data-component="button">Continue</button>
+            <button data-component="button">{copy.button_continue}</button>
           </form>
           {state.type === "code" && (
             <form method="post">
@@ -272,5 +399,5 @@ export function PasswordUI(input: PasswordUIOptions) {
         },
       })
     },
-  } satisfies PasswordConfig
+  }
 }
